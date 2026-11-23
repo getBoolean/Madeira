@@ -1,13 +1,20 @@
 # JIT setup
 
-Madeira needs an attached debugger to create executable memory on iOS. It can
-use either the StikDebug app or its built-in StikJIT helper. Both methods send
-the same bundled `madeira-jit.js` debugger script to the current Madeira
-process.
+Madeira needs debugger authorization to create executable memory on iOS. On
+iOS 18 and later, StikDebug and built-in StikJIT send the bundled
+`madeira-jit.js` script to Madeira's process. Built-in StikJIT requires iOS 26
+or later.
+
+## iPadOS 17.0–17.3
+
+Choose **Settings → JIT → JIT setup → Enable JIT** to request authorization
+from an existing TrollStore installation. A development debugger can also
+authorize Madeira. Once iPadOS marks the process as debugged, Madeira can use
+its iOS 17 JIT allocator. iPadOS 17.4 and later can use the StikDebug route.
 
 ## Automatic selection
 
-The default **Automatic** method uses StikDebug when iOS reports that its
+On iOS 17.4 and later, the default **Automatic** method uses StikDebug when iOS reports that its
 `stikdebug://` URL scheme is installed. Otherwise, it uses Built-in StikJIT.
 Madeira does not silently switch methods after a failed attempt; the error is
 shown so the pairing, VPN, or Developer Disk Image problem can be fixed.

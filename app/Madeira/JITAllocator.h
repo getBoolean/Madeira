@@ -76,6 +76,10 @@ uint64_t jit_available_memory(void);
 // Returns the prepared address (may differ from input on allocation).
 void *jit26_prepare_region(void *addr, size_t len);
 
+bool jit_uses_legacy_backend(void);
+void *jit_allocate_rx(size_t len);
+int jit_make_alias_writable(uintptr_t address, size_t len);
+
 // iOS 26 BRK-based protocol: Tell the debugger to detach.
 void jit26_detach(void);
 

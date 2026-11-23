@@ -201,6 +201,8 @@ final class JITCoordinator: ObservableObject {
         return StikJITHelper.isAvailable ? .stikDebug : .builtIn
     }
 
+    var usesLegacyHelper: Bool { StikJITHelper.usesLegacyHelper }
+
     var automaticDescription: String {
         StikJITHelper.isAvailable
             ? L("StikDebug is installed, so Madeira will open it directly.")
@@ -226,6 +228,17 @@ final class JITCoordinator: ObservableObject {
         error = nil
         status = nil
         connectionProblem = nil
+        if usesLegacyHelper {
+            busy = true
+            StikJITHelper.enableLegacyJIT { [weak self] result in
+                Task { @MainActor in
+                    self?.busy = false
+                    if case .failure(let failure) = result { self?.error = failure.localizedDescription }
+                    completion(result)
+                }
+            }
+            return
+        }
         ensureLoopback(then: { [weak self] restoreOnFailure in
             self?.enableResolved { result in
                 // Nothing will hold the network open now: put back what the shortcut changed.
@@ -540,9 +553,11 @@ struct JITSettingsSection: View {
 
     var body: some View {
         Section {
-            Picker("JIT method", selection: $coordinator.method) {
-                ForEach(JITMethod.allCases) { method in
-                    Text(method.title).tag(method)
+            if !coordinator.usesLegacyHelper {
+                Picker("JIT method", selection: $coordinator.method) {
+                    ForEach(JITMethod.allCases) { method in
+                        Text(method.title).tag(method)
+                    }
                 }
             }
             Button {
@@ -557,7 +572,7 @@ struct JITSettingsSection: View {
                     Label("Run setup again", systemImage: "wand.and.stars")
                 }
             }
-            if coordinator.method == .automatic {
+            if !coordinator.usesLegacyHelper && coordinator.method == .automatic {
                 Text(coordinator.automaticDescription)
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -572,11 +587,15 @@ struct JITSettingsSection: View {
                     Label("No internet connection? Add local copy", systemImage: "square.and.arrow.up")
                 }
             }
-            Toggle("\(JITNetworkShortcut.name) shortcut", isOn: $shortcut.enabled)
+            if !coordinator.usesLegacyHelper {
+                Toggle("\(JITNetworkShortcut.name) shortcut", isOn: $shortcut.enabled)
+            }
         } header: {
             Text("JIT")
         } footer: {
-            Text("When LocalDevVPN can't reach this device, Enable JIT runs your \(JITNetworkShortcut.name) shortcut: it turns Cellular Data off when there's no Wi-Fi and connects LocalDevVPN, then puts both back once the game has started. Each run opens Shortcuts for a moment.")
+            if !coordinator.usesLegacyHelper {
+                Text("When LocalDevVPN can't reach this device, Enable JIT runs your \(JITNetworkShortcut.name) shortcut: it turns Cellular Data off when there's no Wi-Fi and connects LocalDevVPN, then puts both back once the game has started. Each run opens Shortcuts for a moment.")
+            }
         }
     }
 }
@@ -598,27 +617,36 @@ struct JITSetupView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Picker("Method", selection: $coordinator.method) {
-                        ForEach(JITMethod.allCases) { method in
-                            Text(method.title).tag(method)
+                if coordinator.usesLegacyHelper {
+                    Section {
+                        Button("Enable JIT") { coordinator.enable { _ in } }
+                            .disabled(coordinator.busy || StikJITHelper.ready)
+                    } footer: {
+                        Text("Use TrollStore to enable JIT, or attach a development debugger to Madeira.")
+                    }
+                } else {
+                    Section {
+                        Picker("Method", selection: $coordinator.method) {
+                            ForEach(JITMethod.allCases) { method in
+                                Text(method.title).tag(method)
+                            }
                         }
+                        if coordinator.method == .automatic {
+                            Text(coordinator.automaticDescription)
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        LabeledContent("StikDebug",
+                                       value: StikJITHelper.isAvailable ? L("Installed") : L("Not detected"))
+                        LabeledContent("Built-in helper",
+                                       value: MadeiraBuiltInJIT.isAvailable ? "Available" : "Unavailable")
+                    } header: {
+                        Text("JIT method")
+                    } footer: {
+                        Text("Automatic uses StikDebug when it is installed. Madeira does not silently change methods after a failure.")
                     }
-                    if coordinator.method == .automatic {
-                        Text(coordinator.automaticDescription)
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    LabeledContent("StikDebug",
-                                   value: StikJITHelper.isAvailable ? L("Installed") : L("Not detected"))
-                    LabeledContent("Built-in helper",
-                                   value: MadeiraBuiltInJIT.isAvailable ? "Available" : "Unavailable")
-                } header: {
-                    Text("JIT method")
-                } footer: {
-                    Text("Automatic uses StikDebug when it is installed. Madeira does not silently change methods after a failure.")
                 }
 
-                if coordinator.method != .stikDebug {
+                if !coordinator.usesLegacyHelper && coordinator.method != .stikDebug {
                     Section {
                         LabeledContent("Pairing", value: pairingLabel)
                         if OnDevicePairing.isSupported {
@@ -649,7 +677,7 @@ struct JITSetupView: View {
                             coordinator.resetDDI()
                         }.disabled(coordinator.busy)
                     }
-                } else {
+                } else if !coordinator.usesLegacyHelper {
                     Section {
                         if StikJITHelper.isAvailable {
                             Button("Enable JIT with StikDebug") { coordinator.enable() { _ in } }

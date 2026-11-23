@@ -372,12 +372,20 @@ struct OnboardingView: View {
     private var fileImported: Bool { jit.pairingImported && jit.pairingSource == .imported }
 
     @ViewBuilder private var jitPage: some View {
-        switch jitPath {
-        case nil: jitChoices
-        case .onDevice: onDeviceGuide
-        case .pairingFile: pairingFileGuide
-        case .stikDebug: stikDebugGuide
-        case .shortcut: shortcutPage
+        if jit.usesLegacyHelper {
+            VStack(alignment: .leading, spacing: 18) {
+                header("Set up JIT", symbol: "bolt.fill")
+                Text("On this iPadOS version, enable JIT with TrollStore or attach a development debugger to Madeira before starting a Windows game.")
+                primary("Continue", symbol: "arrow.right") { model.next() }
+            }
+        } else {
+            switch jitPath {
+            case nil: jitChoices
+            case .onDevice: onDeviceGuide
+            case .pairingFile: pairingFileGuide
+            case .stikDebug: stikDebugGuide
+            case .shortcut: shortcutPage
+            }
         }
     }
 

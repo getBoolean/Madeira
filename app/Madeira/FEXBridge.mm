@@ -122,9 +122,9 @@ static bool jit_pool_init(void) {
     size_t size = JIT_POOL_SIZE;
     mach_port_t task = mach_task_self();
 
-    // Step 1: Ask debugger to allocate RX pages
-    fex_log("Requesting debugger to allocate %zu bytes of RX memory...", size);
-    void *rx_ptr = jit26_prepare_region(NULL, size);
+    // Step 1: Allocate RX pages using the current OS's JIT backend.
+    fex_log("Allocating %zu bytes of RX memory...", size);
+    void *rx_ptr = jit_allocate_rx(size);
     if (!rx_ptr) {
         fex_log("FAIL: Debugger RX allocation returned NULL");
         return false;
@@ -142,14 +142,16 @@ static bool jit_pool_init(void) {
     );
     if (kr != KERN_SUCCESS) {
         fex_log("FAIL: vm_remap for RW mirror: %s (kr=%d)", mach_error_string(kr), kr);
+        if (jit_uses_legacy_backend()) vm_deallocate(task, (vm_address_t)rx_ptr, size);
         return false;
     }
 
     // Step 3: Set the remapped view to RW
-    kr = vm_protect(task, rw_addr, size, FALSE, VM_PROT_READ | VM_PROT_WRITE);
+    kr = jit_make_alias_writable(rw_addr, size);
     if (kr != KERN_SUCCESS) {
         fex_log("FAIL: vm_protect(RW): %s (kr=%d)", mach_error_string(kr), kr);
         vm_deallocate(task, rw_addr, size);
+        if (jit_uses_legacy_backend()) vm_deallocate(task, (vm_address_t)rx_ptr, size);
         return false;
     }
 

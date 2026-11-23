@@ -568,7 +568,55 @@ static void jit_check_page_protection(void *addr, const char *label) {
     }
 }
 
+bool jit_uses_legacy_backend(void) {
+    if (__builtin_available(iOS 18.0, *)) return false;
+    return true;
+}
+
+static bool jit_region_has_protection(uintptr_t address, size_t len, vm_prot_t expected) {
+    mach_vm_address_t base = address;
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    kern_return_t kr = mach_vm_region(mach_task_self(), &base, &size, VM_REGION_BASIC_INFO_64,
+                                     (vm_region_info_t)&info, &count, &object);
+    if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
+    if (kr == KERN_SUCCESS && base <= address && address - base <= size &&
+        len <= size - (address - base) && info.protection == expected) return true;
+    jit_log("Legacy JIT protection check failed at %p (expected=0x%x, kr=%d)",
+            (void *)address, expected, kr);
+    return false;
+}
+
+void *jit_allocate_rx(size_t len) {
+    if (!jit_uses_legacy_backend()) return jit26_prepare_region(NULL, len);
+    if (!jit_check_debugged()) return NULL;
+
+    // Build 79's debugger-authorized RX mapping. The caller creates a shared
+    // RW alias for emission and leaves the original mapping read/execute.
+    void *rx = mmap(NULL, len, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (rx == MAP_FAILED) {
+        jit_log("Legacy JIT RX mmap failed: %s", strerror(errno));
+        return NULL;
+    }
+    if (!jit_region_has_protection((uintptr_t)rx, len, VM_PROT_READ | VM_PROT_EXECUTE)) {
+        munmap(rx, len);
+        return NULL;
+    }
+    return rx;
+}
+
+int jit_make_alias_writable(uintptr_t address, size_t len) {
+    const vm_prot_t protection = VM_PROT_READ | VM_PROT_WRITE;
+    kern_return_t kr = vm_protect(mach_task_self(), address, len, FALSE, protection);
+    if (kr == KERN_SUCCESS && jit_uses_legacy_backend() &&
+        !jit_region_has_protection(address, len, protection)) return KERN_PROTECTION_FAILURE;
+    return kr;
+}
+
 int64_t jit_test_execute(void) {
+    if (jit_uses_legacy_backend()) return jit_test_execute_strategy2();
     jit_log("=== JIT Execution Test ===");
 
     // Check CS_DEBUGGED first
@@ -672,7 +720,7 @@ int64_t jit_test_execute_strategy2(void) {
 
     // Step 1: Let StikDebug allocate RX pages via _M command (x0=0)
     jit_log("Requesting debugger to allocate %zu bytes of RX memory (x0=0)...", size);
-    void *rx_ptr = jit26_prepare_region(NULL, size);
+    void *rx_ptr = jit_allocate_rx(size);
     jit_log("Debugger allocated RX at: %p", rx_ptr);
 
     if (!rx_ptr) {
@@ -703,6 +751,7 @@ int64_t jit_test_execute_strategy2(void) {
 
     if (kr != KERN_SUCCESS) {
         jit_log("FAIL: vm_remap failed: %s (kr=%d)", mach_error_string(kr), kr);
+        if (jit_uses_legacy_backend()) munmap(rx_ptr, size);
         return -1;
     }
 
@@ -710,10 +759,11 @@ int64_t jit_test_execute_strategy2(void) {
             (void *)rw_addr, cur_prot, max_prot);
 
     // Step 3: Set the remapped view to RW (MeloNX does this)
-    kr = vm_protect(task, rw_addr, size, FALSE, VM_PROT_READ | VM_PROT_WRITE);
+    kr = jit_make_alias_writable(rw_addr, size);
     if (kr != KERN_SUCCESS) {
         jit_log("FAIL: vm_protect(RW) failed: %s (kr=%d)", mach_error_string(kr), kr);
         vm_deallocate(task, rw_addr, size);
+        if (jit_uses_legacy_backend()) munmap(rx_ptr, size);
         return -1;
     }
 
@@ -730,6 +780,11 @@ int64_t jit_test_execute_strategy2(void) {
     uint32_t readback = *(uint32_t *)rx_ptr;
     jit_log("Coherence check: wrote 0x%x to RW, read 0x%x from RX %s",
             code[0], readback, readback == code[0] ? "(OK)" : "(MISMATCH!)");
+    if (readback != code[0]) {
+        vm_deallocate(task, rw_addr, size);
+        if (jit_uses_legacy_backend()) munmap(rx_ptr, size);
+        return -1;
+    }
 
     // Step 5: Execute from debugger-allocated RX
     jit_log("Executing from debugger RX at %p...", rx_ptr);
@@ -755,6 +810,7 @@ int64_t jit_test_execute_strategy2(void) {
 
     // Cleanup
     vm_deallocate(task, rw_addr, size);
+    if (jit_uses_legacy_backend()) munmap(rx_ptr, size);
 
     if (result == 42) {
         jit_log("=== JIT tests passed (strategy 2) ===");

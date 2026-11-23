@@ -19919,7 +19919,7 @@ static inline int mprotect_exec( void *base, size_t size, int unix_prot )
              * that waits for CS_DEBUGGED to clear before probing. */
             {
                 static int ios_share_probed;
-                if (!ios_share_probed && getenv("MADEIRA_SHARE_PROBE"))
+                if (!ios_share_probed && getenv("MADEIRA_SHARE_PROBE") && !getenv("MADEIRA_LEGACY_JIT"))
                 {
                     pthread_t pt;
                     ios_share_probed = 1;

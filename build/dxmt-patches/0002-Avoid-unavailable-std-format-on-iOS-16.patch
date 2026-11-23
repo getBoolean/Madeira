@@ -1,0 +1,153 @@
+From dd9722588b1f81cd1165f03ae4476e57c03a311c Mon Sep 17 00:00:00 2001
+From: realdoomsboygaming
+ <105606471+realdoomsboygaming@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 22:04:00 -0500
+Subject: [PATCH] Avoid unavailable std::format on iOS 16
+
+---
+ src/airconv/dxbc_converter_gs.cpp | 14 +++++++-------
+ src/airconv/dxbc_signature.cpp    |  8 ++++----
+ src/airconv/nt/air_builder.cpp    | 21 +++++++++++----------
+ 3 files changed, 22 insertions(+), 21 deletions(-)
+
+diff --git a/src/airconv/dxbc_converter_gs.cpp b/src/airconv/dxbc_converter_gs.cpp
+index 6c152a1..62f5ff4 100644
+--- a/src/airconv/dxbc_converter_gs.cpp
++++ b/src/airconv/dxbc_converter_gs.cpp
+@@ -9,7 +9,7 @@
+ #include "llvm/Support/Error.h"
+ #include "llvm/Support/raw_ostream.h"
+ #include <cstdint>
+-#include <format>
++#include <string>
+ #include <utility>
+
+ namespace dxmt::dxbc {
+@@ -453,9 +453,9 @@ convert_dxbc_geometry_shader(
+       break;
+     }
+     default:
+-      return llvm::make_error<UnsupportedFeature>(std::format(
+-          "unhandled geometry shader input primitive strip: {}", (uint32_t)pShaderInternal->gs_input_primitive
+-      ));
++      return llvm::make_error<UnsupportedFeature>(
++          "unhandled geometry shader input primitive strip: " +
++          std::to_string((uint32_t)pShaderInternal->gs_input_primitive));
+     }
+   } else {
+     auto leading_vertex_index = builder.CreateMul(builder.getInt32(vertex_per_primitive), primitive_id_in_warp);
+@@ -797,9 +797,9 @@ convert_dxbc_vertex_for_geometry_shader(
+         break;
+       }
+       default:
+-        return llvm::make_error<UnsupportedFeature>(std::format(
+-            "unhandled geometry shader input primitive strip: {}", (uint32_t)pGeometryStage->gs_input_primitive
+-        ));
++        return llvm::make_error<UnsupportedFeature>(
++            "unhandled geometry shader input primitive strip: " +
++            std::to_string((uint32_t)pGeometryStage->gs_input_primitive));
+       }
+     } else {
+       // primitive is valid if all vertex is valid
+diff --git a/src/airconv/dxbc_signature.cpp b/src/airconv/dxbc_signature.cpp
+index 382de15..99afe50 100644
+--- a/src/airconv/dxbc_signature.cpp
++++ b/src/airconv/dxbc_signature.cpp
+@@ -1,5 +1,5 @@
+ #include "dxbc_converter.hpp"
+-#include <format>
++#include <string>
+
+ using namespace microsoft;
+ using namespace dxmt::air;
+@@ -156,7 +156,7 @@ void handle_signature_vs(
+         }
+       }
+       uint32_t assigned_index = func_signature.DefineOutput(OutputVertex{
+-        .user = std::format("SV_ClipDistance{}", reg),
++        .user = "SV_ClipDistance" + std::to_string(reg),
+         .type = msl_float4,
+       });
+       signature_handlers.push_back([=](SignatureContext &ctx) {
+@@ -343,7 +343,7 @@ void handle_signature_ps(
+       break;
+     case D3D10_SB_NAME_CLIP_DISTANCE:
+       assigned_index = func_signature.DefineInput(InputFragmentStageIn{
+-        .user = std::format("SV_ClipDistance{}", reg),
++        .user = "SV_ClipDistance" + std::to_string(reg),
+         .type = msl_float4,
+         .interpolation = interpolation,
+         .pull_mode = false
+@@ -1169,4 +1169,4 @@ void handle_signature(
+   }
+ }
+
+-}; // namespace dxmt::dxbc
+\ No newline at end of file
++}; // namespace dxmt::dxbc
+diff --git a/src/airconv/nt/air_builder.cpp b/src/airconv/nt/air_builder.cpp
+index 5eb3415..77b8c4b 100644
+--- a/src/airconv/nt/air_builder.cpp
++++ b/src/airconv/nt/air_builder.cpp
+@@ -6,7 +6,7 @@
+ #include "llvm/IR/Value.h"
+ #include "llvm/Support/ErrorHandling.h"
+ #include "llvm/Support/raw_ostream.h"
+-#include <format>
++#include <string>
+
+ namespace llvm::air {
+
+@@ -72,17 +72,17 @@ AIRBuilder::getTypeOverloadSuffix(Type *Ty, Signedness Sign) {
+     if (Sign != Signedness::DontCare)
+       Ret += "f.";
+     if (PointerAddrSpace != ~0u)
+-      Ret += std::format("p{}", PointerAddrSpace);
++      Ret += "p" + std::to_string(PointerAddrSpace);
+     if (VectorSize)
+-      Ret += std::format("v{}", VectorSize);
++      Ret += "v" + std::to_string(VectorSize);
+     Ret += "f32";
+   } else if (TyScaler->isHalfTy()) {
+     if (Sign != Signedness::DontCare)
+       Ret += "f.";
+     if (PointerAddrSpace != ~0u)
+-      Ret += std::format("p{}", PointerAddrSpace);
++      Ret += "p" + std::to_string(PointerAddrSpace);
+     if (VectorSize)
+-      Ret += std::format("v{}", VectorSize);
++      Ret += "v" + std::to_string(VectorSize);
+     Ret += "f16";
+   } else if (TyScaler->isIntegerTy()) {
+     if (Sign == Signedness::Signed)
+@@ -90,10 +90,10 @@ AIRBuilder::getTypeOverloadSuffix(Type *Ty, Signedness Sign) {
+     else if (Sign == Signedness::Unsigned)
+       Ret += "u.";
+     if (PointerAddrSpace != ~0u)
+-      Ret += std::format("p{}", PointerAddrSpace);
++      Ret += "p" + std::to_string(PointerAddrSpace);
+     if (VectorSize)
+-      Ret += std::format("v{}", VectorSize);
+-    Ret += std::format("i{}", cast<IntegerType>(TyScaler)->getBitWidth());
++      Ret += "v" + std::to_string(VectorSize);
++    Ret += "i" + std::to_string(cast<IntegerType>(TyScaler)->getBitWidth());
+   } else {
+     Ret += "unknown_type_overload";
+   }
+@@ -278,7 +278,8 @@ AIRBuilder::CreateAtomicCmpXchg(
+ Type *
+ AIRBuilder::getTextureHandleType(const Texture &Texture) {
+   assert(Texture.kind <= Texture::last_resource_kind);
+-  return getOrCreateStructType(std::format("struct._{}_t", TextureInfo[Texture.kind].air_symbol_suffix))
++  return getOrCreateStructType(
++      std::string("struct._") + TextureInfo[Texture.kind].air_symbol_suffix + "_t")
+       ->getPointerTo(1);
+ };
+
+@@ -1852,4 +1853,4 @@ AIRBuilder::SanitizePosition(llvm::Value *Pos) {
+   return builder.CreateSelect(ValidPos, Pos, PosClipped);
+ }
+
+-} // namespace llvm::air
+\ No newline at end of file
++} // namespace llvm::air

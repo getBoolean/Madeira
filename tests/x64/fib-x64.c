@@ -42,6 +42,6 @@ int main(void) {
     WriteFile(h, "\n", 1, &written, NULL);
 
     /* fib(30) = 832040. Use it as the exit code (mod 256) so we can verify
-     * via the process exit code in the log: 832040 % 256 = 232 = 0xE8. */
+     * via the process exit code in the log: 832040 % 256 = 40 = 0x28. */
     return (int)(result & 0xFF);
 }

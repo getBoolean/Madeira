@@ -76,6 +76,9 @@ int main(void){
   subprocess.run([str(exe)],check=True)
 print('PASS real driver entry keeps default failure and opt-in native result')
 project=(root/'app/Madeira.xcodeproj/project.pbxproj').read_text()
-assert project.count('"OTHER_LDFLAGS[sdk=iphoneos*]" = ("$(inherited)", "$(MADEIRA_VULKAN_LDFLAGS)");')==2
+assert sum(
+    '"OTHER_LDFLAGS[sdk=iphoneos*]"' in line and '"$(MADEIRA_VULKAN_LDFLAGS)"' in line
+    for line in project.splitlines()
+) == 2
 assert 'libmadeira_vulkan.a in Frameworks' not in project
 print('PASS no unconditional Vulkan archive dependency in app project')

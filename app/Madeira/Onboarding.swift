@@ -214,6 +214,7 @@ struct OnboardingView: View {
     @State private var showSignIn = false
     @State private var importingPairingFile = false
     @State private var pairingImportError: String?
+    @State private var legacyJITError: String?
     @State private var jitPath: JITSetupPath?
     /// Asked again whenever Madeira comes back to the front (from the App Store, say).
     @State private var localDevVPNInstalled = LocalDevVPN.isInstalled
@@ -372,12 +373,39 @@ struct OnboardingView: View {
     private var fileImported: Bool { jit.pairingImported && jit.pairingSource == .imported }
 
     @ViewBuilder private var jitPage: some View {
-        switch jitPath {
-        case nil: jitChoices
-        case .onDevice: onDeviceGuide
-        case .pairingFile: pairingFileGuide
-        case .stikDebug: stikDebugGuide
-        case .shortcut: shortcutPage
+        if jit.usesLegacyHelper {
+            VStack(alignment: .leading, spacing: 18) {
+                header("Set up JIT", symbol: "bolt.fill")
+                Text("On this iPadOS version, enable JIT with TrollStore or attach a development debugger to Madeira before starting a Windows game.")
+                if jit.isReady {
+                    Label("JIT is enabled", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    primary("Continue", symbol: "arrow.right") { model.next() }
+                } else {
+                    primary(jit.busy ? "Enabling JIT…" : "Enable JIT with TrollStore", symbol: "bolt.fill") {
+                        legacyJITError = nil
+                        jit.enable { result in
+                            if case .failure(let error) = result {
+                                legacyJITError = error.localizedDescription
+                            }
+                        }
+                    }
+                    .disabled(jit.busy)
+                    if let legacyJITError {
+                        Text(legacyJITError).font(.subheadline).foregroundStyle(.red)
+                    }
+                    secondary("I'll do this later") { model.next() }
+                        .disabled(jit.busy)
+                }
+            }
+        } else {
+            switch jitPath {
+            case nil: jitChoices
+            case .onDevice: onDeviceGuide
+            case .pairingFile: pairingFileGuide
+            case .stikDebug: stikDebugGuide
+            case .shortcut: shortcutPage
+            }
         }
     }
 

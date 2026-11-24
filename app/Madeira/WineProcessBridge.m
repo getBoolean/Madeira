@@ -1049,8 +1049,12 @@ static NSString *madeira_vulkan_library(NSString *bundle)
         return madeira_vulkan_static_available() ? @"madeira-static-moltenvk" : nil;
     if (!set || !strcasecmp(v, "moltenvk"))
         return [bundle stringByAppendingPathComponent:@"gl/libMoltenVK.dylib"];
-    if (!strcasecmp(v, "kosmickrisp"))
-        return [bundle stringByAppendingPathComponent:@"gl/libvulkan_kosmickrisp.dylib"];
+    if (!strcasecmp(v, "kosmickrisp")) {
+        if (@available(iOS 26.0, *))
+            return [bundle stringByAppendingPathComponent:@"gl/libvulkan_kosmickrisp.dylib"];
+        dprintf(STDERR_FILENO, "[vulkan] KosmicKrisp requires iOS 26; using MoltenVK\n");
+        return [bundle stringByAppendingPathComponent:@"gl/libMoltenVK.dylib"];
+    }
     if (strchr(v, '/'))
         return v[0] == '/' ? [NSString stringWithUTF8String:v]
                            : [bundle stringByAppendingPathComponent:[NSString stringWithUTF8String:v]];

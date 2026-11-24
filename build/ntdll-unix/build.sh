@@ -267,12 +267,19 @@ for src in $WINE_SRC/dlls/ntdll/unix/*.c; do
             # (ios_default_keyed_event, loader_ios.c), not to the first process's
             # global. The copy is compiled from obj/, so its one relative include
             # is made absolute; the build fails if the source no longer matches.
-            perl -0pe 's/(NTSTATUS WINAPI NtWaitForKeyedEvent\()/HANDLE ios_default_keyed_event(void);\n$1/;
+            # An availability check naming only macOS accepts every iOS version.
+            # The address-based synchronization APIs are available from iOS 17.4.
+            perl -0pe 's/(__builtin_available\( macOS 14\.4), \* \)/$1, iOS 17.4, * )/g;
+                       s/(NTSTATUS WINAPI NtWaitForKeyedEvent\()/HANDLE ios_default_keyed_event(void);\n$1/;
                        s/if \(!handle\) handle = keyed_event;/if (!handle) handle = ios_default_keyed_event();/g;
                        s{"\.\./\.\./\.\./\.\./build/madeira_cfg\.h"}{"'"$REPO_ROOT"'/build/madeira_cfg.h"}' \
                 "$src" > "$OBJ_DIR/sync_ios.c"
             if [ "$(grep -c 'handle = ios_default_keyed_event()' "$OBJ_DIR/sync_ios.c")" != 2 ]; then
                 echo "  sync: keyed-event patch did not apply"; exit 1
+            fi
+            if [ "$(grep -Fc '__builtin_available( macOS 14.4, iOS 17.4, * )' "$OBJ_DIR/sync_ios.c")" -lt 2 ] ||
+                grep -Fq '__builtin_available( macOS 14.4, * )' "$OBJ_DIR/sync_ios.c"; then
+                echo "  sync: iOS availability guards did not apply"; exit 1
             fi
             # MADEIRA_THREAD_QOS (thread_ios.c): ios_eco_apply_self sets a guest
             # thread's QoS through madeira_guest_qos_self, which picks the class

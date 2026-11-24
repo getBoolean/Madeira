@@ -5265,6 +5265,10 @@ int server_pipe( int fd[2] )
 #ifdef HAVE_PIPE2
     static BOOL have_pipe2 = TRUE;
 
+#ifdef WINE_IOS
+    /* The build SDK can provide a weak import absent on the running OS. */
+    if (__builtin_available(iOS 27.0, *))
+#endif
     if (have_pipe2)
     {
         if (!(ret = pipe2( fd, O_CLOEXEC ))) return ret;

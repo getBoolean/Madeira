@@ -5413,13 +5413,16 @@ struct GraphicsSettings: View {
             if !Self.hasVkd3d { note(L("vkd3d-proton is not in this build."), warning: d3d12 == "vkd3d") }
 
             choicePicker(L("Vulkan driver"), key: "vulkan", value: $vulkan,
-                         choices: Self.hasKosmicKrisp || vulkan == "kosmickrisp" ? Self.vulkanChoices : Array(Self.vulkanChoices.prefix(2)),
-                         other: { $0 == "off" || $0 == "0" ? L("Off") : L("Custom library") })
+                         choices: Self.hasKosmicKrisp && Self.metal4 ? Self.vulkanChoices : Array(Self.vulkanChoices.prefix(2)),
+                         other: {
+                             if $0 == "kosmickrisp" { return L("KosmicKrisp (unavailable)") }
+                             return $0 == "off" || $0 == "0" ? L("Off") : L("Custom library")
+                         })
             note(vulkanNote)
             if !Self.hasKosmicKrisp {
                 note(L("KosmicKrisp is not in this build (no gl/libvulkan_kosmickrisp.dylib)."), warning: vulkan == "kosmickrisp")
             } else if !Self.metal4 {
-                note(L("This device has no Metal 4 GPU, so KosmicKrisp cannot start on it."), warning: vulkan == "kosmickrisp")
+                note(L("KosmicKrisp requires iOS 26 and a Metal 4 GPU."), warning: vulkan == "kosmickrisp")
             }
 
             Button("Reset to defaults") {

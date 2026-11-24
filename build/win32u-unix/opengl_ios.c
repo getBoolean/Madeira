@@ -1235,7 +1235,15 @@ static BOOL zink_init(void)
         if (!want[0] || !strcasecmp( want, "moltenvk" ))
             snprintf( path, sizeof(path), "%s/libMoltenVK.dylib", dir );
         else if (!strcasecmp( want, "kosmickrisp" ))
-            snprintf( path, sizeof(path), "%s/libvulkan_kosmickrisp.dylib", dir );
+        {
+            if (__builtin_available( iOS 26.0, * ))
+                snprintf( path, sizeof(path), "%s/libvulkan_kosmickrisp.dylib", dir );
+            else
+            {
+                ERR( "[winios-gl] KosmicKrisp requires iOS 26; using MoltenVK\n" );
+                snprintf( path, sizeof(path), "%s/libMoltenVK.dylib", dir );
+            }
+        }
         else if (want[0] == '/')
             snprintf( path, sizeof(path), "%s", want );
         else

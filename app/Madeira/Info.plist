@@ -66,6 +66,7 @@
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>stikdebug</string>
+		<string>apple-magnifier</string>
 		<string>stikjit</string>
 		<string>localdevvpn</string>
 	</array>

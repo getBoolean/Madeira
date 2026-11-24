@@ -12,6 +12,7 @@ enum StikJITHelper {
         case invalidRequest
         case unavailable
         case timedOut
+        case legacyUnavailable
 
         var errorDescription: String? {
             switch self {
@@ -22,7 +23,12 @@ enum StikJITHelper {
             case .unavailable:
                 return "StikDebug is not installed. Install it, or configure Built-in StikJIT."
             case .timedOut:
+                if StikJITHelper.usesLegacyHelper {
+                    return "JIT authorization did not arrive within 90 seconds. Enable JIT for Madeira in TrollStore or attach a development debugger."
+                }
                 return "StikDebug did not attach to Madeira within 90 seconds. Check its pairing file and LocalDevVPN, then try again."
+            case .legacyUnavailable:
+                return "Open Madeira with a development debugger or use TrollStore's Enable JIT on iPadOS 17.0–17.3."
             }
         }
     }
@@ -37,8 +43,36 @@ enum StikJITHelper {
     /// Check whether StikDebug is installed. `stikdebug` is its canonical scheme;
     /// the older `stikjit` alias remains declared for compatibility.
     static var isAvailable: Bool {
+        guard !usesLegacyHelper else { return false }
         guard let url = URL(string: "stikdebug://enable-jit") else { return false }
         return UIApplication.shared.canOpenURL(url)
+    }
+
+    static var usesLegacyHelper: Bool {
+        if #available(iOS 17.4, *) { return false }
+        return true
+    }
+
+    static func enableLegacyJIT(completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let bundleID = Bundle.main.bundleIdentifier else {
+            completion(.failure(RequestError.invalidRequest))
+            return
+        }
+        var request = URLComponents()
+        request.scheme = "apple-magnifier"
+        request.host = "enable-jit"
+        request.queryItems = [URLQueryItem(name: "bundle-id", value: bundleID)]
+        guard let url = request.url, UIApplication.shared.canOpenURL(url) else {
+            completion(.failure(RequestError.legacyUnavailable))
+            return
+        }
+        UIApplication.shared.open(url) { opened in
+            guard opened else {
+                completion(.failure(RequestError.legacyUnavailable))
+                return
+            }
+            waitForDebugger(completion: completion)
+        }
     }
 
     /// Open StikDebug with our JIT script embedded in the URL.
@@ -80,8 +114,7 @@ enum StikJITHelper {
     /// waits for `ready` (CS_DEBUGGED and a live debugger), which is what ml1235's
     /// pollForJIT did; the flag-only poll reported success at once in the
     /// flagged-without-debugger state. `ready` reads the flag silently (below).
-    /// Opening a URL only proves iOS accepted it. Readiness requires both the
-    /// sticky CS_DEBUGGED flag and a live debugger that can answer Madeira's BRK.
+    /// Opening a URL only proves iOS accepted it. Poll for runtime readiness.
     @discardableResult
     static func waitForDebugger(timeout: TimeInterval = 90,
                                 completion: @escaping (Result<Void, Error>) -> Void) -> Timer {
@@ -89,7 +122,8 @@ enum StikJITHelper {
         let timer = Timer(timeInterval: 0.5, repeats: true) { timer in
             if ready {
                 timer.invalidate()
-                LogStore.shared.log("JIT enabled and debugger attached.", level: .success)
+                let message = jit_uses_legacy_backend() ? "JIT authorized." : "JIT enabled and debugger attached."
+                LogStore.shared.log(message, level: .success)
                 completion(.success(()))
             } else if Date() >= deadline {
                 timer.invalidate()
@@ -220,7 +254,7 @@ enum StikJITHelper {
     /// polls this every 2 s for the whole app run (and waitForDebugger every 0.5 s).
     static var ready: Bool {
         guard SigningStatus.current.debugged else { return false }
-        return !attachCheck || poolTaken || isDebuggerAttached()
+        return jit_uses_legacy_backend() || !attachCheck || poolTaken || isDebuggerAttached()
     }
 
     /// CS_DEBUGGED is set but nothing can answer a pool request: JIT has to be
@@ -288,7 +322,8 @@ enum StikJITHelper {
     static func allocatePool(poolSize requestedPoolSize: Int = 128 * 1024 * 1024) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
         var poolSize = requestedPoolSize      // ml1036: may shrink to fit, see the hole census below
         poolFailure = nil
-        LogStore.shared.log("Allocating \(poolSize / 1024 / 1024)MB JIT pool via debugger...")
+        let legacy = jit_uses_legacy_backend()
+        LogStore.shared.log("Allocating \(poolSize / 1024 / 1024)MB JIT pool (\(legacy ? "iOS 17" : "debugger"))...")
         // madeira-bcd Social Club layout 2: take the [0x7000000000, +4 GB) hold
         // FIRST. Taken at alias time it lost the race on build 348 (GTA log
         // 2026-10-03 08:00: "is not free (kr=3)", the RW alias then landed at
@@ -308,7 +343,7 @@ enum StikJITHelper {
         // whether a debugger is attached now. The handler cannot take a BRK away
         // from an attached debugger, which sees the exception first, so a wrong
         // reading costs nothing.
-        if !debuggerAttached && MadeiraConfig.flag("MADEIRA_JIT_TRAP_FALLBACK") {
+        if !legacy && !debuggerAttached && MadeiraConfig.flag("MADEIRA_JIT_TRAP_FALLBACK") {
             jit_arm_trap_fallback()
             LogStore.shared.log("[jit-debugger] no debugger is attached although CS_DEBUGGED is set: "
                 + "an unanswered pool request now fails the launch instead of crashing the app", level: .error)
@@ -739,8 +774,8 @@ enum StikJITHelper {
         var rxPtrOpt: UnsafeMutableRawPointer? = nil
         var requestUnanswered = false
         for attempt in 0..<3 {
-            guard let p = jit26_prepare_region(nil, poolSize), p != UnsafeMutableRawPointer(bitPattern: 0) else {
-                LogStore.shared.log("Debugger failed to allocate RX memory (attempt \(attempt))", level: .error)
+            guard let p = jit_allocate_rx(poolSize) else {
+                LogStore.shared.log("Could not allocate RX memory (attempt \(attempt))", level: .error)
                 requestUnanswered = true
                 break
             }
@@ -799,7 +834,7 @@ enum StikJITHelper {
                         rxPtrOpt = nil
                     }
                     var replaced = false
-                    if let q = jit26_prepare_region(nil, pairSingle), q != UnsafeMutableRawPointer(bitPattern: 0) {
+                    if let q = jit_allocate_rx(pairSingle) {
                         let qa = Int(bitPattern: q)
                         let qGuest = qa + pairSingle > guestLo && qa < guestHi
                         if qa >= goodLow && !qGuest && !overlapsExeWindow(vm_address_t(qa), vm_address_t(pairSingle)) {
@@ -828,6 +863,10 @@ enum StikJITHelper {
             }
         }
         guard let rxPtr = rxPtrOpt else {
+            if requestUnanswered && legacy {
+                poolFailure = "Madeira could not allocate executable memory. Enable JIT for Madeira, then try again."
+                return nil
+            }
             if requestUnanswered && !debuggerAttached {
                 // Nothing answered the BRK: there is no pool and no placement to
                 // re-roll, so the app stays up and says what to do.
@@ -1236,7 +1275,7 @@ enum StikJITHelper {
             level: rwOverlaps ? .error : .success)
 
         // Set RW protection
-        let kr2 = vm_protect(mach_task_self_, rwAddr, vm_size_t(poolSize), 0, VM_PROT_READ | VM_PROT_WRITE)
+        let kr2 = jit_make_alias_writable(rwAddr, poolSize)
         guard kr2 == KERN_SUCCESS else {
             LogStore.shared.log("vm_protect(RW) failed: \(kr2)", level: .error)
             vm_deallocate(mach_task_self_, rwAddr, vm_size_t(poolSize))
@@ -1387,7 +1426,7 @@ enum StikJITHelper {
                 if a == h.base { plugs.append((a, vm_size_t(h.size))) } else { vm_deallocate(mach_task_self_, a, vm_size_t(h.size)) }
             }
         }
-        let got = jit26_prepare_region(nil, Int(size))
+        let got = jit_allocate_rx(Int(size))
         for (a, sz) in plugs { vm_deallocate(mach_task_self_, a, sz) }
         guard let p = got, p != UnsafeMutableRawPointer(bitPattern: 0) else {
             LogStore.shared.log("[pool-split] the debugger did not allocate the second region (\(size >> 20)MB) — the pool "
@@ -1419,7 +1458,7 @@ enum StikJITHelper {
                         if a == h.base { mplugs.append((a, vm_size_t(h.size))) } else { vm_deallocate(mach_task_self_, a, vm_size_t(h.size)) }
                     }
                 }
-                let mgot = jit26_prepare_region(nil, Int(msize))
+                let mgot = jit_allocate_rx(Int(msize))
                 for (a, sz) in mplugs { vm_deallocate(mach_task_self_, a, sz) }
                 if let mp = mgot, mp != UnsafeMutableRawPointer(bitPattern: 0) {
                     let m = vm_address_t(bitPattern: mp)
@@ -1514,7 +1553,7 @@ enum StikJITHelper {
                 if a == h.base { plugs.append((a, vm_size_t(h.size))) } else { vm_deallocate(mach_task_self_, a, vm_size_t(h.size)) }
             }
         }
-        let got = jit26_prepare_region(nil, Int(size))
+        let got = jit_allocate_rx(Int(size))
         for (a, sz) in plugs { vm_deallocate(mach_task_self_, a, sz) }
         guard let p = got, p != UnsafeMutableRawPointer(bitPattern: 0) else {
             LogStore.shared.log("[pool-low] the debugger did not allocate region C (\(size >> 20)MB) -- code buffers stay "
@@ -1580,7 +1619,7 @@ enum StikJITHelper {
             let krMap = vm_remap(mach_task_self_, &a, vm_size_t(r.size), 0, 0 /* VM_FLAGS_FIXED */ | VM_FLAGS_OVERWRITE,
                                  mach_task_self_, r.rx, 0, &curProt, &maxProt, VM_INHERIT_NONE)
             let krRW = krMap == KERN_SUCCESS
-                ? vm_protect(mach_task_self_, a, vm_size_t(r.size), 0, VM_PROT_READ | VM_PROT_WRITE)
+                ? jit_make_alias_writable(a, Int(r.size))
                 : krMap
             if krMap != KERN_SUCCESS || krRW != KERN_SUCCESS || a != want {
                 failed = String(format: "region 0x%lx+%luMB: remap %d, protect %d, at 0x%lx not 0x%lx",
@@ -1645,8 +1684,7 @@ enum StikJITHelper {
             : krA
         let krHole = vm_protect(mach_task_self_, rw + sizeA, vm_size_t(rxB - rxA - sizeA), 1, VM_PROT_NONE)
         let krRW = krB == KERN_SUCCESS
-            ? max(vm_protect(mach_task_self_, rw, vm_size_t(sizeA), 0, VM_PROT_READ | VM_PROT_WRITE),
-                  vm_protect(mach_task_self_, b, vm_size_t(sizeB), 0, VM_PROT_READ | VM_PROT_WRITE))
+            ? max(jit_make_alias_writable(rw, Int(sizeA)), jit_make_alias_writable(b, Int(sizeB)))
             : krB
         guard krA == KERN_SUCCESS, krB == KERN_SUCCESS, krRW == KERN_SUCCESS, a == rw, b == rw + (rxB - rxA) else {
             vm_deallocate(mach_task_self_, rw, vm_size_t(span))
@@ -1659,6 +1697,7 @@ enum StikJITHelper {
 
     /// Detach the debugger. Call this after Wine is done loading PE DLLs.
     static func detachDebugger() {
+        guard !jit_uses_legacy_backend() else { return }
         LogStore.shared.log("Detaching debugger...")
         jit26_detach()
         // task #34: signal in-process waiters (share-probe poller). CS_DEBUGGED

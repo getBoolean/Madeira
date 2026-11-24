@@ -35,13 +35,32 @@ xcodebuild \
   -sdk iphoneos \
   -destination 'generic/platform=iOS' \
   -derivedDataPath "$DERIVED" \
-  IPHONEOS_DEPLOYMENT_TARGET=18.0 \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_IDENTITY='' \
   build
 
 [[ -d "$APP" ]] || { echo "ERROR: xcodebuild succeeded but Madeira.app is missing" >&2; exit 1; }
+
+# Keep the app and the iOS 26 helper at their respective project targets.
+minimum_os=$(/usr/libexec/PlistBuddy -c 'Print MinimumOSVersion' "$APP/Info.plist")
+[[ "$minimum_os" == 17.0 ]] || { echo "ERROR: Madeira minimum OS is $minimum_os, expected 17.0" >&2; exit 1; }
+verify_app_binary() {
+  xcrun otool -l "$1" | awk -v binary="${1##*/}" '
+  $1 == "cmd" { command = $2 }
+  $1 == "minos" && command == "LC_BUILD_VERSION" && ($2 == "17.0" || $2 == "17.0.0") { target = 1 }
+  $1 == "name" && $2 ~ /\/_GameController_SwiftUI\.framework\// && command != "LC_LOAD_WEAK_DYLIB" { required_overlay = 1 }
+  END {
+    if (!target) print "ERROR: " binary " does not target iOS 17.0" > "/dev/stderr"
+    if (required_overlay) print "ERROR: " binary " requires _GameController_SwiftUI at launch" > "/dev/stderr"
+    exit (!target || required_overlay)
+  }
+'
+}
+verify_app_binary "$APP/Madeira"
+if [[ -f "$APP/Madeira.debug.dylib" ]]; then
+  verify_app_binary "$APP/Madeira.debug.dylib"
+fi
 
 python3 "$ROOT/tools/build/runtime-components.py" bundle "$APP"
 

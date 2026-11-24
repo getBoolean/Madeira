@@ -63,7 +63,7 @@ if [ -n "${MAD_BUILD_ID:-}" ]; then EXTRA+=(-DMAD_BUILD_ID="\"$MAD_BUILD_ID\"");
 # texture-buffer probe and/or the clear functions when those do not compile,
 # so the other kernels never depend on them.
 echo "=== helper kernels (metallib) ==="
-MAD_KERNELS_FLAGS=""   # the -D flags of the compile that succeeded (the iOS 18 copy below uses them too)
+MAD_KERNELS_FLAGS=""   # the -D flags of the compile that succeeded (the fallback copies below use them too)
 mad_kernels_metal() {
     xcrun -sdk iphoneos metal -std=metal3.0 "$@" -o "$OUT/mad_kernels.metallib" "$SRC/mad_kernels.metal" 2> "$OUT/mad_kernels.err" &&
         MAD_KERNELS_FLAGS="$*"
@@ -78,18 +78,20 @@ if command -v xcrun > /dev/null 2>&1 &&
     (cd "$OUT" && xxd -i mad_kernels.metallib > mad_kernels_metallib.h)
     EXTRA+=(-DMAD_HAVE_KERNELS -I"$OUT")
     echo "  $(wc -c < "$OUT/mad_kernels.metallib" | tr -d ' ') bytes"
-    # The same kernels for iOS 18 (AIR 2.7): the library above takes the SDK's
-    # default target (AIR 2.8 with the iOS 26 SDK), which iOS 18 refuses. The
-    # runtime loads this copy only when the first is refused (madeira_d3d12.c).
-    if xcrun -sdk iphoneos metal -std=metal3.0 --target=air64-apple-ios18.0 $MAD_KERNELS_FLAGS \
-           -o "$OUT/mad_kernels_ios18.metallib" "$SRC/mad_kernels.metal" 2> "$OUT/mad_kernels_ios18.err"; then
-        (cd "$OUT" && xxd -i mad_kernels_ios18.metallib > mad_kernels_ios18_metallib.h)
-        EXTRA+=(-DMAD_HAVE_KERNELS_IOS18)
-        echo "  iOS 18 copy: $(wc -c < "$OUT/mad_kernels_ios18.metallib" | tr -d ' ') bytes"
-    else
-        echo "  the iOS 18 copy did not build -- iOS 18 runs without the helper kernels, as before"
-        head -20 "$OUT/mad_kernels_ios18.err" 2> /dev/null || true
-    fi
+    # The SDK default target can produce a library older iOS loaders reject.
+    for ios_version in 18 17; do
+        name="mad_kernels_ios${ios_version}"
+        if xcrun -sdk iphoneos metal -std=metal3.0 --target="air64-apple-ios${ios_version}.0" $MAD_KERNELS_FLAGS \
+               -o "$OUT/$name.metallib" "$SRC/mad_kernels.metal" 2> "$OUT/$name.err"; then
+            (cd "$OUT" && xxd -i "$name.metallib" > "${name}_metallib.h")
+            EXTRA+=("-DMAD_HAVE_KERNELS_IOS${ios_version}")
+            echo "  iOS $ios_version copy: $(wc -c < "$OUT/$name.metallib" | tr -d ' ') bytes"
+        else
+            echo "  the iOS $ios_version copy did not build"
+            head -20 "$OUT/$name.err" 2> /dev/null || true
+            [ "${MADEIRA_REQUIRE_KERNELS:-0}" != 1 ] || exit 1
+        fi
+    done
 else
     echo "  helper kernels did not build -- what needs them is skipped"
     head -20 "$OUT/mad_kernels.err" 2> /dev/null || true

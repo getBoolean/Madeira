@@ -5835,14 +5835,29 @@ static void mad_gs_draw(UINT pt, UINT vertex_size, UINT max_prims, UINT instance
 #ifdef MAD_HAVE_KERNELS
 #include "mad_kernels_metallib.h"
 #endif
-/* The same kernels compiled for iOS 18 (AIR 2.7). The library above takes the
- * SDK's default deployment target (AIR 2.8 with the iOS 26 SDK), which iOS 18's
- * loader refuses, so there every helper kernel was "NOT available". This copy
- * is tried only after that library is refused, so later iOS versions load
- * exactly what they loaded before. build/madeira-d3d12/build-pe.sh builds it
- * when the toolchain can (MAD_HAVE_KERNELS_IOS18). */
+/* Fallback libraries for systems that reject the SDK default target. */
 #ifdef MAD_HAVE_KERNELS_IOS18
 #include "mad_kernels_ios18_metallib.h"
+#endif
+#ifdef MAD_HAVE_KERNELS_IOS17
+#include "mad_kernels_ios17_metallib.h"
+#endif
+#ifdef MAD_HAVE_KERNELS
+static obj_handle_t mad_load_helper_library(struct mad_device *d, const void *blob,
+                                            size_t size, const char *label) {
+    void *img = malloc(size);
+    if (!img) return 0;
+    memcpy(img, blob, size);
+    obj_handle_t data = DispatchData_alloc_init((uint64_t)(uintptr_t)img, size);
+    obj_handle_t lib = 0, err = 0;
+    if (data) {
+        lib = MTLDevice_newLibrary(d->mtl_device, data, &err);
+        NSObject_release(data);
+    }
+    free(img);
+    if (err) mad_log_nserror(label, err);
+    return lib;
+}
 #endif
 #define MAD_KRING_BYTES (4u << 20)
 static int mad_kernels_ready(struct mad_device *d) {
@@ -5850,25 +5865,19 @@ static int mad_kernels_ready(struct mad_device *d) {
     AcquireSRWLockExclusive(&d->k_lock);
     if (!d->k_state) {
 #ifdef MAD_HAVE_KERNELS
-        /* a heap copy, as the converter's libraries are made from (not a pointer into this image) */
-        void *img = malloc(mad_kernels_metallib_len);
-        obj_handle_t dd = 0, err = 0, fn = 0;
+        obj_handle_t err = 0, fn = 0;
         struct WMTComputePipelineInfo ci; struct WMTBufferInfo bi;
-        if (img) { memcpy(img, mad_kernels_metallib, mad_kernels_metallib_len); dd = DispatchData_alloc_init((uint64_t)(uintptr_t)img, (uint64_t)mad_kernels_metallib_len); }
-        if (dd) { d->k_lib = MTLDevice_newLibrary(d->mtl_device, dd, &err); NSObject_release(dd); }
-        free(img);
-        if (err) mad_log_nserror("helper kernels", err);
+        d->k_lib = mad_load_helper_library(d, mad_kernels_metallib,
+                                           mad_kernels_metallib_len, "helper kernels");
 #ifdef MAD_HAVE_KERNELS_IOS18
-        if (!d->k_lib) {   /* refused (iOS 18): the iOS 18 copy */
-            void *img18 = malloc(mad_kernels_ios18_metallib_len);
-            obj_handle_t dd18 = 0;
-            err = 0;
-            if (img18) { memcpy(img18, mad_kernels_ios18_metallib, mad_kernels_ios18_metallib_len); dd18 = DispatchData_alloc_init((uint64_t)(uintptr_t)img18, (uint64_t)mad_kernels_ios18_metallib_len); }
-            if (dd18) { d->k_lib = MTLDevice_newLibrary(d->mtl_device, dd18, &err); NSObject_release(dd18); }
-            free(img18);
-            if (err) mad_log_nserror("helper kernels (iOS 18 copy)", err);
-            d3d12_log("[madeira-d3d12] helper kernels: the iOS 18 copy %s\n", d->k_lib ? "loaded" : "was refused too");
-        }
+        if (!d->k_lib)
+            d->k_lib = mad_load_helper_library(d, mad_kernels_ios18_metallib,
+                                               mad_kernels_ios18_metallib_len, "helper kernels (iOS 18)");
+#endif
+#ifdef MAD_HAVE_KERNELS_IOS17
+        if (!d->k_lib)
+            d->k_lib = mad_load_helper_library(d, mad_kernels_ios17_metallib,
+                                               mad_kernels_ios17_metallib_len, "helper kernels (iOS 17)");
 #endif
         if (d->k_lib) fn = MTLLibrary_newFunction(d->k_lib, "mad_tess_indirect_args");
         if (fn) {
@@ -16702,13 +16711,11 @@ static void mad_resolve_target(struct mad_device *d) {
                         : apple8 ? MAD_IR_FAMILY_APPLE8
                         : apple7 ? MAD_IR_FAMILY_APPLE7
                                  : MAD_IR_FAMILY_APPLE6;
-        /* ml1140: 18.0, not 17.0. The converter refuses atomics on
-         * globallycoherent textures below iOS 18 ("IR contains unsupported
-         * instruction: dx.op.atomicBinOp.i32 ... requires targeting macOS 15,
-         * iOS 18, or later", IRErrorCodeUnsupportedInstruction = 7): a UE5 Lumen/
-         * Nanite compute shader failed on the device and UE treated the failed
-         * PSO as fatal. Every device this runtime targets runs iOS 26+. */
-        snprintf(g_target.os_version, sizeof g_target.os_version, "18.0");
+        uint64_t os_major = 0;
+        WMTGetOSVersion(&os_major, NULL, NULL);
+        /* Globally coherent texture atomics require the iOS 18 target. */
+        snprintf(g_target.os_version, sizeof g_target.os_version, "%s",
+                 os_major >= 18 ? "18.0" : "17.0");
     }
     g_target.resolved = 1;
     d3d12_log("[madeira-d3d12] conversion target: %s, family %u, min %s "

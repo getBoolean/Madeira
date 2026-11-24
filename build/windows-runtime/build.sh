@@ -59,6 +59,10 @@ MADEIRA_REQUIRE_KERNELS=1 bash "$R/build/madeira-d3d12/build-pe.sh"
 for dll in madeira_d3d12 d3d12 d3d12core; do
     cp "$R/build/madeira-d3d12/out-pe/$dll.dll" "$R/app/Madeira/arm64ec-windows/$dll.dll"
 done
+for test in cube m2 vfetch; do
+    exe="d3d12-$test-x64.exe"
+    cp "$R/build/madeira-d3d12/out-pe/$exe" "$R/app/Madeira/arm64ec-windows/$exe"
+done
 
 # Pin the compatibility runtime instead of building a moving branch.
 LUA="$R/toolchains/luajit-a4c064539ea931274d407e1249b4bb575424a0f4"

@@ -204,6 +204,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
 
     D3D12_SHADER_RESOURCE_VIEW_DESC svd; ZeroMemory(&svd, sizeof svd);
     svd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    svd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     svd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     svd.Texture2D.MipLevels = 1;
     ID3D12Device_CreateShaderResourceView(dev, tex, &svd, srv_cpu);

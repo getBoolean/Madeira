@@ -840,6 +840,14 @@ static int mad_air_ranges(sm50_shader_t shader, struct madeira_ir_air_range *out
  * functions. Everything about the stage layout (table indices 27/28 for the
  * vertex shader inside the object function, 29/30 for the hull and for the
  * domain) is the compiler's convention, stated in its dxbc_converter_ts.cpp. */
+static SM50_SHADER_METAL_VERSION mad_airconv_metal_version(const struct madeira_ir_convert_args *a)
+{
+    const char *version = (const char *)(uintptr_t)a->os_version;
+    if (a->target_os == MADEIRA_IR_OS_IOS && version && atoi(version) < 18)
+        return SM50_SHADER_METAL_310;
+    return SM50_SHADER_METAL_320;
+}
+
 static int mad_airconv_convert_tess(struct madeira_ir_convert_args *a,
                                     const unsigned char *bc, size_t bclen)
 {
@@ -970,7 +978,7 @@ static int mad_airconv_convert_tess(struct madeira_ir_convert_args *a,
         struct SM50_SHADER_IA_INPUT_LAYOUT_DATA ia;
         struct SM50_SHADER_GS_PASS_THROUGH_DATA gsp;
         int rc;
-        memset(&common, 0, sizeof common); common.type = SM50_SHADER_COMMON; common.metal_version = SM50_SHADER_METAL_320;
+        memset(&common, 0, sizeof common); common.type = SM50_SHADER_COMMON; common.metal_version = mad_airconv_metal_version(a);
         memset(&tess, 0, sizeof tess); tess.type = SM50_SHADER_PSO_TESSELLATOR; tess.next = &common;
         tess.max_potential_tess_factor = a->ret_max_potential_factor;
         if (object) {
@@ -1114,7 +1122,7 @@ static int mad_airconv_convert_gs(struct madeira_ir_convert_args *a,
         struct SM50_SHADER_IA_INPUT_LAYOUT_DATA ia;
         struct SM50_SHADER_PSO_GEOMETRY_SHADER_DATA geom;
         int rc;
-        memset(&common, 0, sizeof common); common.type = SM50_SHADER_COMMON; common.metal_version = SM50_SHADER_METAL_320;
+        memset(&common, 0, sizeof common); common.type = SM50_SHADER_COMMON; common.metal_version = mad_airconv_metal_version(a);
         memset(&geom, 0, sizeof geom); geom.type = SM50_SHADER_PSO_GEOMETRY_SHADER; geom.strip_topology = a->gs_strip ? true : false;
         if (object) {
             memset(&ia, 0, sizeof ia);
@@ -1270,7 +1278,7 @@ static int mad_airconv_convert(struct madeira_ir_convert_args *a,
         void *chain;
         memset(&common, 0, sizeof common);
         common.type = SM50_SHADER_COMMON;
-        common.metal_version = SM50_SHADER_METAL_320;
+        common.metal_version = mad_airconv_metal_version(a);
         chain = &common;
 
         /* ml1023: the pixel stage must be compiled against its PSO facts.

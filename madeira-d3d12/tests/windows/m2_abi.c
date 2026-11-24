@@ -238,6 +238,7 @@ int main(void) {
         if (FAILED(ID3D12GraphicsCommandList_Close(list))) { cycles_ok = 0; break; }
         ID3D12CommandQueue_ExecuteCommandLists(queue, 1, lists);
         if (FAILED(ID3D12CommandQueue_Signal(queue, fence, n))) { cycles_ok = 0; break; }
+        if (FAILED(ID3D12Fence_SetEventOnCompletion(fence, n, NULL))) { cycles_ok = 0; break; }
         if (ID3D12Fence_GetCompletedValue(fence) != n) { cycles_ok = 0; break; }
     }
     CHECK(cycles_ok && ID3D12Fence_GetCompletedValue(fence) == 46,
@@ -381,6 +382,11 @@ int main(void) {
         pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
         pd.SampleDesc.Count = 1;
         pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pd.SampleMask = UINT_MAX;
+        pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pd.RasterizerState.DepthClipEnable = TRUE;
 
         ID3D12PipelineState *pso = NULL;
         hr = ID3D12Device_CreateGraphicsPipelineState(dev, &pd, &IID_ID3D12PipelineState, (void **)&pso);
@@ -534,6 +540,14 @@ int main(void) {
         cpd.DSVFormat = DXGI_FORMAT_D32_FLOAT;
         cpd.SampleDesc.Count = 1;
         cpd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        cpd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        cpd.SampleMask = UINT_MAX;
+        cpd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        cpd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        cpd.RasterizerState.DepthClipEnable = TRUE;
+        cpd.DepthStencilState.DepthEnable = TRUE;
+        cpd.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        cpd.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
         ID3D12PipelineState *cpso = NULL;
         hr = ID3D12Device_CreateGraphicsPipelineState(dev, &cpd, &IID_ID3D12PipelineState, (void **)&cpso);
         CHECK(SUCCEEDED(hr) && cpso, "cube pipeline created with a depth format (%#lx)", hr);
@@ -725,6 +739,11 @@ int main(void) {
         tpd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
         tpd.SampleDesc.Count = 1;
         tpd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        tpd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        tpd.SampleMask = UINT_MAX;
+        tpd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        tpd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        tpd.RasterizerState.DepthClipEnable = TRUE;
         ID3D12PipelineState *tpso = NULL;
         hr = ID3D12Device_CreateGraphicsPipelineState(dev, &tpd, &IID_ID3D12PipelineState, (void **)&tpso);
         CHECK(SUCCEEDED(hr) && tpso, "textured pipeline created from converted DXIL (%#lx)", hr);
@@ -810,6 +829,7 @@ int main(void) {
 
             D3D12_SHADER_RESOURCE_VIEW_DESC svd; ZeroMemory(&svd, sizeof svd);
             svd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            svd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             svd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
             svd.Texture2D.MipLevels = 1;
             ID3D12Device_CreateShaderResourceView(dev, srctex, &svd, sh);

@@ -1,0 +1,180 @@
+diff --git a/src/airconv/dxso_compile.cpp b/src/airconv/dxso_compile.cpp
+index a1296941..067f17a5 100644
+--- a/src/airconv/dxso_compile.cpp
++++ b/src/airconv/dxso_compile.cpp
+@@ -35,6 +35,10 @@
+ #include <optional>
+ #include <string>
+ 
++#ifdef DXMT_IOS_METALLIB
++extern "C" int wmt_local_ios_major_version(void);
++#endif
++
+ namespace dxmt {
+ 
+ // TODO: d3d9 should route CreateVertexShader/CreatePixelShader through
+@@ -95,11 +99,15 @@ compile_dxso(
+   // air.version / air.language_version: AGX rejects PS metallibs
+   // missing these. Mirrors dxbc::setup_metal_version's
+   // SM50_SHADER_METAL_320 arm.
++  bool metal31 = false;
++#ifdef DXMT_IOS_METALLIB
++  metal31 = wmt_local_ios_major_version() == 17;
++#endif
+   auto u32_md = [&](uint32_t v) { return ConstantAsMetadata::get(ConstantInt::get(context, APInt{32, v})); };
+   module.setTargetTriple("air64-apple-macosx15.0.0");
+-  module.getOrInsertNamedMetadata("air.version")->addOperand(MDTuple::get(context, {u32_md(2), u32_md(7), u32_md(0)}));
++  module.getOrInsertNamedMetadata("air.version")->addOperand(MDTuple::get(context, {u32_md(2), u32_md(metal31 ? 6 : 7), u32_md(0)}));
+   module.getOrInsertNamedMetadata("air.language_version")
+-      ->addOperand(MDTuple::get(context, {MDString::get(context, "Metal"), u32_md(3), u32_md(2), u32_md(0)}));
++      ->addOperand(MDTuple::get(context, {MDString::get(context, "Metal"), u32_md(3), u32_md(metal31 ? 1 : 2), u32_md(0)}));
+ 
+   air::FunctionSignatureBuilder sig;
+ 
+diff --git a/src/airconv/ffp_compile.cpp b/src/airconv/ffp_compile.cpp
+index 74c04a36..0c36fe0e 100644
+--- a/src/airconv/ffp_compile.cpp
++++ b/src/airconv/ffp_compile.cpp
+@@ -11,6 +11,10 @@
+ #include <string>
+ #include <vector>
+ 
++#ifdef DXMT_IOS_METALLIB
++extern "C" int wmt_local_ios_major_version(void);
++#endif
++
+ namespace dxmt {
+ 
+ using namespace llvm;
+@@ -30,11 +34,15 @@ splat4(LLVMContext &context, float x, float y, float z, float w) {
+ // metallibs missing these; same values compile_dxso stamps.
+ void
+ stamp_metal_version(LLVMContext &context, Module &module) {
++  bool metal31 = false;
++#ifdef DXMT_IOS_METALLIB
++  metal31 = wmt_local_ios_major_version() == 17;
++#endif
+   auto u32_md = [&](uint32_t v) { return ConstantAsMetadata::get(ConstantInt::get(context, APInt{32, v})); };
+   module.setTargetTriple("air64-apple-macosx15.0.0");
+-  module.getOrInsertNamedMetadata("air.version")->addOperand(MDTuple::get(context, {u32_md(2), u32_md(7), u32_md(0)}));
++  module.getOrInsertNamedMetadata("air.version")->addOperand(MDTuple::get(context, {u32_md(2), u32_md(metal31 ? 6 : 7), u32_md(0)}));
+   module.getOrInsertNamedMetadata("air.language_version")
+-      ->addOperand(MDTuple::get(context, {MDString::get(context, "Metal"), u32_md(3), u32_md(2), u32_md(0)}));
++      ->addOperand(MDTuple::get(context, {MDString::get(context, "Metal"), u32_md(3), u32_md(metal31 ? 1 : 2), u32_md(0)}));
+ }
+ 
+ /* The generated vertex function. Same manual-fetch model as the DXSO
+diff --git a/src/airconv/metallib_writer.cpp b/src/airconv/metallib_writer.cpp
+index ec97552f..929cff7d 100644
+--- a/src/airconv/metallib_writer.cpp
++++ b/src/airconv/metallib_writer.cpp
+@@ -2,6 +2,10 @@
+ #include "llvm/Bitcode/BitcodeWriter.h"
+ #include "llvm/IR/Constants.h"
+ 
++#ifdef DXMT_IOS_METALLIB
++extern "C" int wmt_local_ios_major_version(void);
++#endif
++
+ using namespace llvm;
+ 
+ namespace dxmt::metallib {
+@@ -17,7 +21,18 @@ struct InputAttribute {
+   // TODO: extend patch/control point here
+ };
+ 
+-void MetallibWriter::Write(const llvm::Module &module, raw_ostream &OS) {
++void MetallibWriter::Write(llvm::Module &module, raw_ostream &OS) {
++  unsigned ios_target = 0;
++#ifdef DXMT_IOS_METALLIB
++  if (wmt_local_ios_major_version()) {
++    auto *air_version = module.getNamedMetadata("air.version");
++    auto *metadata = air_version && air_version->getNumOperands() ? air_version->getOperand(0) : nullptr;
++    auto *minor = metadata && metadata->getNumOperands() > 1
++                    ? mdconst::dyn_extract<ConstantInt>(metadata->getOperand(1)) : nullptr;
++    ios_target = minor && minor->getZExtValue() >= 7 ? 18 : 17;
++    module.setTargetTriple(ios_target == 18 ? "air64-apple-ios18.0.0" : "air64-apple-ios17.0.0");
++  }
++#endif
+ 
+   SmallVector<char, 0> bitcode;
+   SmallVector<char, 0> public_metadata;
+@@ -391,12 +406,12 @@ void MetallibWriter::Write(const llvm::Module &module, raw_ostream &OS) {
+   header.BitcodeSize = bitcode.size();
+ 
+   header.Type = FileType::MTLBType_Executable; // executable
+-  header.Platform = Platform::MTLBPlatform_macOS;
++  header.Platform = ios_target ? Platform::MTLBPlatform_iOS : Platform::MTLBPlatform_macOS;
+   header.VersionMajor = 2;
+   header.VersionMinor = 7;
+-  header.OS = OS::MTLBOS_macOS;
+-  header.OSVersionMajor = 14;
+-  header.OSVersionMinor = 4;
++  header.OS = ios_target ? OS::MTLBOS_iOS : OS::MTLBOS_macOS;
++  header.OSVersionMajor = ios_target ? ios_target : 14;
++  header.OSVersionMinor = ios_target ? 0 : 4;
+ 
+   // write to stream
+   OS << value(header);
+diff --git a/src/airconv/metallib_writer.hpp b/src/airconv/metallib_writer.hpp
+index e51a29da..81ded029 100644
+--- a/src/airconv/metallib_writer.hpp
++++ b/src/airconv/metallib_writer.hpp
+@@ -25,7 +25,7 @@ enum class MTLBFourCC : uint32_t {
+ 
+ const uint32_t MTLB_Magic = MTLB_FOURCC('M', 'T', 'L', 'B');
+ 
+-enum class Platform : uint16_t { MTLBPlatform_macOS = 0x8001 };
++enum class Platform : uint16_t { MTLBPlatform_iOS = 0x0001, MTLBPlatform_macOS = 0x8001 };
+ 
+ enum class FileType : uint8_t {
+   MTLBType_Executable = 0x00,
+@@ -33,6 +33,7 @@ enum class FileType : uint8_t {
+ 
+ enum class OS : uint8_t {
+   MTLBOS_macOS = 0x81,
++  MTLBOS_iOS = 0x82,
+ };
+ 
+ typedef struct __attribute__((packed)) {
+@@ -117,7 +118,7 @@ static_assert(sizeof(MTLB_VATY) == 2, "");
+ class MetallibWriter {
+ 
+ public:
+-  void Write(const llvm::Module &module, llvm::raw_ostream &OS);
++  void Write(llvm::Module &module, llvm::raw_ostream &OS);
+ };
+ 
+ } // namespace dxmt::metallib
+\ No newline at end of file
+diff --git a/src/dxmt/dxmt_shader_cache.hpp b/src/dxmt/dxmt_shader_cache.hpp
+index 21192b73..c195c00d 100644
+--- a/src/dxmt/dxmt_shader_cache.hpp
++++ b/src/dxmt/dxmt_shader_cache.hpp
+@@ -5,7 +5,7 @@
+ 
+ namespace dxmt {
+ 
+-constexpr int kDXMTShaderCacheVersion = 19; /* madeira-bcd: vertex fetch bounds; madeira-bcd: byte-aligned vertex fetch; madeira ml1382: precise DXBC min/max */
++constexpr int kDXMTShaderCacheVersion = 20; /* madeira-bcd: vertex fetch bounds; madeira-bcd: byte-aligned vertex fetch; madeira ml1382: precise DXBC min/max */
+ 
+ // Base directory every DXMT cache lives under, so the Metal shader cache and
+ // this one cannot disagree about where that is.
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index 8592f891..6585e692 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -148,6 +148,13 @@ typedef int NTSTATUS;
+  * down, past every handler this routes. */
+ #include "wmt_remote_client.h"
+ 
++#if TARGET_OS_IOS
++int
++wmt_local_ios_major_version(void) {
++  return wmtr_enabled() ? 0 : (int)[[NSProcessInfo processInfo] operatingSystemVersion].majorVersion;
++}
++#endif
++
+ void
+ execute_on_main(dispatch_block_t block) {
+   if ([NSThread isMainThread]) {

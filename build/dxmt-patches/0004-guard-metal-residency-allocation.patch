@@ -1,0 +1,16 @@
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index 8592f891..1866d070 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -7575,9 +7585,10 @@ _MTLResidencySet_addAllocation(void *obj) {
+     wmtr_call(RM_OP_RESIDENCY_ADD, &a, sizeof a, 0, 0, 0);
+     return STATUS_SUCCESS;
+   }
+-  if (@available(iOS 18.0, macOS 15.0, *))
++  if (@available(iOS 18.0, macOS 15.0, *)) {
+     wmt_stale_check(params->arg, "residency add");   /* ml1156 */
+     [(id<MTLResidencySet>)params->handle addAllocation:(id<MTLAllocation>)params->arg];
++  }
+   return STATUS_SUCCESS;
+ }
+ 

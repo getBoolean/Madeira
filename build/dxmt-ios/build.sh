@@ -24,7 +24,7 @@ INCLUDES="-I$DXMT_ROOT/include -I$DXMT_ROOT/libs -I$DXMT_SRC/winemetal -I$DXMT_S
 INCLUDES_DIRECTX="-I$DXMT_ROOT/include/native/directx -I$DXMT_ROOT/include/native/windows"
 INCLUDES_SHADERS="-I$BUILD_DIR/shader-headers"
 LLVM_INCLUDES="-I$LLVM_BUILD/include -I$LLVM_SRC/include"
-AIRCONV_DEFS="-D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS"
+AIRCONV_DEFS="-DDXMT_IOS_METALLIB=1 -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS"
 CXX_FLAGS="-std=c++20 -fno-exceptions -fno-rtti"
 
 # MADEIRA (WOW64_DESIGN.md section 8, `dxmt_madeira_native`): the D3D9
@@ -40,7 +40,7 @@ CXX_FLAGS="-std=c++20 -fno-exceptions -fno-rtti"
 # ntdll-private PE one.  The table it names is renamed on iOS
 # (winemetal_unix.c:5084), so point it at the real symbol on the command line
 # rather than editing either file.
-MADEIRA_DEFS="-DDXMT_NATIVE=1 -DDXMT_MADEIRA=1 -DDXMT_IOS=1 -DDXMT_PAGE_SIZE=4096 -DNOMINMAX"
+MADEIRA_DEFS="-DDXMT_NATIVE=1 -DDXMT_MADEIRA=1 -DDXMT_IOS=1 -DDXMT_COMMAND_IOS=1 -DDXMT_PAGE_SIZE=4096 -DNOMINMAX"
 MADEIRA_INCLUDES="-I$DXMT_SRC/nativemetal -I$DXMT_ROOT/include -I$DXMT_ROOT/libs \
  -I$DXMT_SRC/winemetal -I$DXMT_SRC/airconv -I$DXMT_SRC/util -I$DXMT_SRC/dxmt \
  -I$DXMT_SRC/d3d9 -I$DXMT_SRC/d3d9/unix -I$DXMT_SRC/d3d9shim"
@@ -64,7 +64,7 @@ compile_objc() {
     # MADEIRA_ONLY=<name>: recompile one object only.
     if [ -n "${MADEIRA_ONLY:-}" ] && [ "$name" != "$MADEIRA_ONLY" ]; then return 0; fi
     printf "  %-40s " "$name"
-    if xcrun -sdk iphoneos clang $COMMON_FLAGS -x objective-c $INCLUDES \
+    if xcrun -sdk iphoneos clang $COMMON_FLAGS -Werror=unguarded-availability -x objective-c $INCLUDES \
         -c "$src" -o "$OBJ_DIR/$name.o" 2>"$OBJ_DIR/$name.err"; then
         echo "OK"; SUCCEEDED=$((SUCCEEDED+1))
     else
@@ -267,6 +267,7 @@ echo "=== MADEIRA: dxmt_madeira_native -- internal command library ==="
 # the cache check so that a flag change here regenerates the header.
 DXMT_METAL_STD="${DXMT_METAL_STD:-metal3.1}"
 if [ ! -f "$BUILD_DIR/shader-headers/dxmt_command.h" ] \
+   || [ ! -f "$BUILD_DIR/shader-headers/dxmt_command_ios.h" ] \
    || [ "$DXMT_SRC/dxmt/dxmt_command.metal" -nt "$BUILD_DIR/shader-headers/dxmt_command.h" ] \
    || [ "$0" -nt "$BUILD_DIR/shader-headers/dxmt_command.h" ]; then
     mkdir -p "$BUILD_DIR/shader-headers"
@@ -274,7 +275,11 @@ if [ ! -f "$BUILD_DIR/shader-headers/dxmt_command.h" ] \
      && xcrun -sdk macosx metal -std="$DXMT_METAL_STD" --target=air64-apple-macos14.0 \
           -o dxmt_command.air -c "$DXMT_SRC/dxmt/dxmt_command.metal" \
      && xcrun -sdk macosx metallib -o dxmt_command.metallib dxmt_command.air \
-     && xxd -n dxmt_command -i dxmt_command.metallib dxmt_command.h)
+     && xxd -n dxmt_command -i dxmt_command.metallib dxmt_command.h \
+     && xcrun -sdk iphoneos metal -std="$DXMT_METAL_STD" --target=air64-apple-ios17.0 \
+          -o dxmt_command_ios.air -c "$DXMT_SRC/dxmt/dxmt_command.metal" \
+     && xcrun -sdk iphoneos metallib -o dxmt_command_ios.metallib dxmt_command_ios.air \
+     && xxd -n dxmt_command_ios -i dxmt_command_ios.metallib dxmt_command_ios.h)
     echo "  dxmt_command.h                           OK (-std=$DXMT_METAL_STD)"
 else
     echo "  dxmt_command.h                           CACHED"

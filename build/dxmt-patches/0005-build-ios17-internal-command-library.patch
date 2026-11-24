@@ -1,0 +1,68 @@
+diff --git a/src/dxmt/dxmt_command.cpp b/src/dxmt/dxmt_command.cpp
+index a73cb6b0..07ffed81 100644
+--- a/src/dxmt/dxmt_command.cpp
++++ b/src/dxmt/dxmt_command.cpp
+@@ -4,6 +4,9 @@
+ #include "dxmt_format.hpp"
+ 
+ #include "dxmt_command.h"
++#ifdef DXMT_COMMAND_IOS
++#include "dxmt_command_ios.h"
++#endif
+ 
+ #include <cfloat>
+ #define CREATE_PIPELINE(name)                                                                                          \
+@@ -13,11 +16,19 @@
+ namespace dxmt {
+ 
+ InternalCommandLibrary::InternalCommandLibrary(WMT::Device device) {
+-  WMT::Reference<WMT::Error> error;
++  WMT::Error error;
++#ifdef DXMT_COMMAND_IOS
++  if (!device.supportsFamily(WMTGPUFamilyMac2)) {
++    library_ = device.newLibrary(dxmt_command_ios, dxmt_command_ios_len, error);
++    if (library_)
++      return;
++  }
++#endif
+   library_ = device.newLibrary(dxmt_command, dxmt_command_len, error);
+ 
+-  if (error) {
+-    ERR("Failed to create internal command library: ", error.description().getUTF8String());
++  if (!library_) {
++    ERR("Failed to create internal command library: ",
++        error ? error.description().getUTF8String() : "no library returned");
+     abort();
+   }
+ };
+diff --git a/src/dxmt/meson.build b/src/dxmt/meson.build
+index 6e32aa57..6da440e6 100644
+--- a/src/dxmt/meson.build
++++ b/src/dxmt/meson.build
+@@ -29,9 +29,25 @@ dxmt_shaders_ir = metalir_generator.process(dxmt_shaders)
+ 
+ dxmt_shaders_lib = metallib_generator.process(dxmt_shaders_ir)
+ 
+-dxmt_shaders_header = hexdump_generator.process(dxmt_shaders_lib)
++dxmt_shaders_header = [hexdump_generator.process(dxmt_shaders_lib)]
++
++dxmt_shader_flags = []
++if host_machine.system() == 'windows' and (host_machine.cpu_family() == 'aarch64' or get_option('wine_builtin_dll'))
++  metalir_ios = generator(xcrun,
++    output : ['@BASENAME@_ios.air'],
++    arguments : ['-sdk', 'iphoneos', 'metal', '-std=' + metal_std,
++                 '--target=air64-apple-ios17.0', '-o', '@OUTPUT@', '-c', '@INPUT@'],
++  )
++  metallib_ios = generator(xcrun,
++    output : ['@BASENAME@.metallib'],
++    arguments : ['-sdk', 'iphoneos', 'metallib', '-o', '@OUTPUT@', '@INPUT@'],
++  )
++  dxmt_shaders_header += [hexdump_generator.process(metallib_ios.process(metalir_ios.process(dxmt_shaders)))]
++  dxmt_shader_flags += ['-DDXMT_COMMAND_IOS=1']
++endif
+ 
+ dxmt_lib = static_library('dxmt', dxmt_src, dxmt_shaders_header, dxmt_version,
++  cpp_args            : dxmt_shader_flags,
+   dependencies        : [ util_dep, airconv_forward_dep, winemetal_dep ],
+   include_directories : [ dxmt_include_path ],
+ )

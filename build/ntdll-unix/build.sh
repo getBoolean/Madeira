@@ -9,6 +9,12 @@ SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 OBJ_DIR="$BUILD_DIR/obj"
 APP_LIB="$REPO_ROOT/app/Madeira/libntdll_unix.a"
 
+# The WoW64 OpenGL thunks need Madeira's guest-to-host pointer translation.
+wgl_patch="$REPO_ROOT/patches/wine-opengl-winios.patch"
+if ! git -C "$WINE_SRC" apply --reverse --check "$wgl_patch" >/dev/null 2>&1; then
+    git -C "$WINE_SRC" apply "$wgl_patch"
+fi
+
 mkdir -p "$OBJ_DIR"
 
 # Optional Vulkan route; do not change the normal native build.
